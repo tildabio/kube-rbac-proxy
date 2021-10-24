@@ -150,7 +150,14 @@ func (n krpAuthorizerAttributesGetter) GetRequestAttributes(u user.Info, r *http
 
 	if n.authzConfig.ResourceAttributes == nil {
 		// Default attributes mirror the API attributes that would allow this access to kube-rbac-proxy
-		allAttrs := append(allAttrs, authorizer.AttributesRecord{
+
+		// following canonical URL formats are suggested
+		// /apis/<apiGroup>/<apiVersion>/namespaces/<namespaceName>/<resourceType>
+		// /apis/<apiGroup>/<apiVersion>/namespaces/<namespaceName>/<resourceType>/<resourceName>
+		// /apis/<apiGroup>/<apiVersion>/namespaces/<namespaceName>/<resourceType>/<subResource>/<resourceName>
+		// depending on whether there are 8 or 9 parts in the URL path, appropriate subjectaccessreview
+		// request is made.
+		attr := authorizer.AttributesRecord{
 			User:            u,
 			Verb:            apiVerb,
 			Namespace:       "",
@@ -159,9 +166,46 @@ func (n krpAuthorizerAttributesGetter) GetRequestAttributes(u user.Info, r *http
 			Resource:        "",
 			Subresource:     "",
 			Name:            "",
-			ResourceRequest: false,
+			ResourceRequest: true,
 			Path:            r.URL.Path,
-		})
+		}
+
+		parts := strings.Split(
+			strings.TrimRight(r.URL.Path, "/"),
+			"/",
+		)
+
+		if len(parts) >= 3 {
+			attr.APIGroup = parts[2]
+		}
+
+		if len(parts) >= 4 {
+			attr.APIVersion = parts[3]
+		}
+
+		// ensure namespaces exists in URL
+		if len(parts) >= 6 && parts[4] == "namespaces" {
+			attr.Namespace = parts[5]
+		} else {
+			allAttrs = append(allAttrs, attr)
+			return allAttrs
+		}
+
+		if len(parts) >= 7 {
+			attr.Resource = parts[6]
+		}
+
+		if len(parts) == 8 {
+			attr.Name = parts[7]
+		}
+
+		if len(parts) == 9 {
+			attr.Subresource = parts[7]
+			attr.Name = parts[8]
+		}
+
+		// append to the list and then return
+		allAttrs = append(allAttrs, attr)
 		return allAttrs
 	}
 
